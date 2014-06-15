@@ -1,0 +1,123 @@
+/* Improved delayMicroseconds function
+ * Copyright (c) 2011, Paul Stoffregen, paul at pjrc dot com
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+
+#ifndef _delayMicroseconds_h_
+#define _delayMicroseconds_h_
+
+#include <stdint.h>
+#include <avr/io.h>
+
+static inline void delayMicroseconds(uint16_t) __attribute__((always_inline, unused));
+static inline void delayMicroseconds(uint16_t usec)
+{
+	if (__builtin_constant_p(usec)) {
+		#if F_CPU == 16000000L
+		uint16_t tmp = usec * 4;
+		#elif F_CPU == 8000000L
+		uint16_t tmp = usec * 2;
+		#elif F_CPU == 4000000L
+		uint16_t tmp = usec;
+		#elif F_CPU == 2000000L
+		uint16_t tmp = usec / 2;
+		if (usec == 1) {
+			asm volatile("rjmp L%=\nL%=:\n");
+		}
+		#elif F_CPU == 1000000L
+		uint16_t tmp = usec / 4;
+		if (usec == 1) {
+			asm volatile("nop\n");
+		} else if (usec == 2) {
+			asm volatile("rjmp L%=\nL%=:\n");
+		} else if (usec == 3) {
+			asm volatile("rjmp L%=\nL%=:\n");
+			asm volatile("nop\n");
+		}
+		#else
+		#error "Clock must be 16, 8, 4, 2 or 1 MHz"
+		#endif
+		if (tmp > 0) {
+			if (tmp < 256) {
+				uint8_t tmp2 = tmp;
+				asm volatile(
+				"L_%=_loop:"				// 1 to load
+					"subi	%0, 1"		"\n\t"	// 2
+					"brne	L_%=_loop"	"\n\t"	// 2 (1 on last)
+					: "+d" (tmp2)
+					: "0" (tmp2)
+				);
+			} else {
+				asm volatile(
+				"L_%=_loop:"				// 2 to load
+					"sbiw	%A0, 1"		"\n\t"	// 2
+					"brne	L_%=_loop"	"\n\t"	// 2 (1 on last)
+					: "+w" (tmp)
+					: "0" (tmp)
+				);
+			}
+		}
+	} else {
+		asm volatile(
+		#if F_CPU == 16000000L
+			"sbiw	%A0, 2"			"\n\t"	// 2
+			"brcs	L_%=_end"		"\n\t"	// 1
+			"breq	L_%=_end"		"\n\t"	// 1
+			"lsl	%A0"			"\n\t"	// 1
+			"rol	%B0"			"\n\t"	// 1
+			"lsl	%A0"			"\n\t"	// 1
+			"rol	%B0"			"\n\t"	// 1  overhead: (8)/4 = 2us
+		#elif F_CPU == 8000000L
+			"sbiw	%A0, 3"			"\n\t"	// 2
+			"brcs	L_%=_end"		"\n\t"	// 1
+			"breq	L_%=_end"		"\n\t"	// 1
+			"lsl	%A0"			"\n\t"	// 1
+			"rol	%B0"			"\n\t"	// 1  overhead: (6)/2 = 3 us
+		#elif F_CPU == 4000000L
+			"sbiw	%A0, 4"			"\n\t"	// 2
+			"brcs	L_%=_end"		"\n\t"	// 1
+			"breq	L_%=_end"		"\n\t"	// 1  overhead: (4) = 4 us
+		#elif F_CPU == 2000000L
+			"sbiw	%A0, 12"		"\n\t"	// 2
+			"brcs	L_%=_end"		"\n\t"	// 1
+			"breq	L_%=_end"		"\n\t"	// 1
+			"lsr	%B0"			"\n\t"	// 1
+			"ror	%A0"			"\n\t"	// 1  overhead: (6)*2 = 12 us
+		#elif F_CPU == 1000000L
+			"sbiw	%A0, 32"		"\n\t"	// 2
+			"brcs	L_%=_end"		"\n\t"	// 1
+			"breq	L_%=_end"		"\n\t"	// 1
+			"lsr	%B0"			"\n\t"	// 1
+			"ror	%A0"			"\n\t"	// 1
+			"lsr	%B0"			"\n\t"	// 1
+			"ror	%A0"			"\n\t"	// 1  overhead: (8)*4 = 32 us
+		#endif
+		"L_%=_loop:"
+			"sbiw	%A0, 1"			"\n\t"	// 2
+			"brne	L_%=_loop"		"\n\t"	// 2
+		"L_%=_end:"
+			: "+w" (usec)
+			: "w" (usec)
+		);
+	}
+}
+
+#endif
