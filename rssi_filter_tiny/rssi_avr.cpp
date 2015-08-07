@@ -18,7 +18,7 @@
              ___ ___
  RESET	B5  -|  o  |- VCC  
  VIN	B3  -|atiny|- B2   
- PULSE	B4  -|45/85|- B1   ALARM  
+     	B4  -|45/85|- B1   ALARM  
 		GND -|_____|- B0   PWMOUT
  */
 
@@ -32,9 +32,9 @@
 #define ADCREF2_56V (1 << REFS2) | (1 << REFS1)
 #define ADCREFVCC	0
 
-#define PULSE_PIN 4
 #define VIN_PIN 3
 #define PWMOUT_PIN 0
+#define ALARM_TONE_PIN 2
 #define ALARM_PIN 1
 
 //TinyDebugSerial Serial;
@@ -45,38 +45,59 @@ uint8_t data_i = 0;
 int data[8];
 
 // threshold for no signal
-#define RSSI_NO_SIGNAL 200
+#define RSSI_NO_SIGNAL 180
 #define RSSI_LOW_SIGNAL 120
 
+uint8_t alarm = 0;
+uint8_t alarm_c = 0;
+
+uint8_t alarm_p = 0;
+int alarm_p_c = 0;
+
 SIGNAL(ADC_vect) {	
-	PORTB |= 1 << PULSE_PIN;
-	int reading = ADCW;
+    int reading = ADCW;
 	
 	if (reading < minval) 
 		minval = reading;
  
-    if (count++ == 400) { // should be equal to at least two periods of input, so sure to get a sample during RSSI
+    if (alarm && ++alarm_c == 3) {
+        alarm_c = 0;
+        
+        if (alarm == 1 || alarm_p) {
+            if (bisset(PORTB,ALARM_TONE_PIN)) {
+                bclr(PORTB,ALARM_TONE_PIN);
+            } else
+                bset(PORTB,ALARM_TONE_PIN);
+        } 
+        
+        
+        if (alarm == 2 && alarm_p_c++ == 1500) {
+            alarm_p_c = 0;
+            alarm_p = !alarm_p;
+            PORTB &= ~(1 << ALARM_TONE_PIN);
+        }
+    }
+    
+    if (count++ == 200) { // should be equal to at least two periods of input, so sure to get a sample during RSSI
 		data[data_i] = minval;
         data_i = (data_i + 1) & 7;
 		
-		if (minval > RSSI_NO_SIGNAL) { // signal dropout! warn immediately!
-			data[0] = 255;
-			data[1] = 255;
-			data[2] = 255;
-			data[3] = 255;
-			data[4] = 255;
-			data[5] = 255;
-			data[6] = 255;
-			data[7] = 255;	
-		}
-		
-        int val = data[0] + data[1] + data[2] + data[3] + data[4] + data[5] + data[6] + data[7];
+		int val = 0;
+		for (int i = 0; i < 8; i++)
+		    val += data[i];
+        
         val = val / 8;
 		
 		if (val > RSSI_LOW_SIGNAL) { // low/no signal
 			PORTB |= (1 << ALARM_PIN);
-		} else
-			PORTB &= ~(1 << ALARM_PIN);
+			alarm = 1;
+			if (val < RSSI_NO_SIGNAL)
+			    alarm = 2;
+		} else {
+		    alarm = 0;
+		    PORTB &= ~(1 << ALARM_TONE_PIN);
+		    PORTB &= ~(1 << ALARM_PIN);
+		}
 		
         OCR0A = 255 - min(val ,255);
         minval = 1024;
@@ -84,8 +105,6 @@ SIGNAL(ADC_vect) {
     }
 	
 	wdt_reset();
-	
-	PORTB &= ~(1 << 4);
 }
 
 
@@ -116,7 +135,7 @@ int startRead(uint8_t pin) {
 	ADCSRB = 0;
 
 	ADCSRA |= (1<<ADSC); // begin conversion
-	// 13 cycles per sample, should be about 19khz sample rate
+	// 13 cycles per sample, about 19khz sample rate
 	
 	return 1;
 	//ADCSRA = 0;  // stop ADC
@@ -125,13 +144,13 @@ int startRead(uint8_t pin) {
 int main(void) {
 	wdt_enable(WDTO_2S);
 	
-	DDRB |= 1 << PULSE_PIN;
+	DDRB |= 1 << ALARM_TONE_PIN;
 	DDRB |= 1 << ALARM_PIN;
 	DDRB |= 1 << PWMOUT_PIN;
 	DDRB &= ~(1 << VIN_PIN);
 	
 	PORTB &= ~(1 << ALARM_PIN);
-	PORTB &= ~(1 << PULSE_PIN);
+	PORTB &= ~(1 << ALARM_TONE_PIN);
 	
 	TCCR0A = (1 << COM0A1) | 0x3; // fast pwm
 	TCCR0B = 1; // no prescaler
